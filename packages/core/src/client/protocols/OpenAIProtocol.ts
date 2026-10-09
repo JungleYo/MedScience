@@ -89,7 +89,6 @@ export class OpenAIProtocol {
           name: t.name,
           description: t.description,
           parameters: t.parameters || t.inputSchema || {},
-          ...(typeof t.strict === 'boolean' ? { strict: t.strict } : {}),
         },
       }));
 

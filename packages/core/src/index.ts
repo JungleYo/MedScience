@@ -92,9 +92,3 @@ export * from './utils/httpClient.js';
 // App API channel registry (one definition shared by the Electron host, the
 // local web server, and the renderer's typed client).
 export * from './api/channels.js';
-
-// Biomedical Claim Structured Parser
-export * from './claim-parser/schema.js';
-export * from './claim-parser/validation.js';
-export * from './claim-parser/prompt.js';
-export * from './claim-parser/parser.js';
