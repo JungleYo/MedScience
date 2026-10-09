@@ -5,8 +5,8 @@
  * whether a claim is true and it does not fetch evidence.
  */
 
-export const CLAIM_SCHEMA_VERSION = '1.0.0';
-export const CLAIM_PARSER_VERSION = '1.0.0';
+export const CLAIM_SCHEMA_VERSION = '2.0.0';
+export const CLAIM_PARSER_VERSION = '2.0.0';
 
 export const CLAIM_TYPE_IDS = [
   'T01',
@@ -81,7 +81,7 @@ export type ClaimOperator = (typeof OPERATOR_TYPES)[number];
 export const COMPOSITION_OPERATORS = ['AND', 'OR', 'NOT', 'IF_THEN'] as const;
 export type CompositionOperator = (typeof COMPOSITION_OPERATORS)[number];
 
-export const QUANTIFIERS = ['ALL', 'SOME', 'MOST', 'AVERAGE', 'POPULATION_LEVEL', 'UNSPECIFIED'] as const;
+export const QUANTIFIERS = ['ALL', 'SOME', 'MOST', 'AVERAGE', 'POPULATION_LEVEL', 'NOT_ALL', 'NONE', 'NOT_SOME', 'UNSPECIFIED'] as const;
 export type Quantifier = (typeof QUANTIFIERS)[number];
 
 export const MODALITIES = ['ASSERTED', 'POSSIBLE', 'PROBABLE', 'HYPOTHETICAL', 'REPORTED'] as const;
@@ -89,6 +89,29 @@ export type Modality = (typeof MODALITIES)[number];
 
 export const POLARITIES = ['AFFIRMED', 'NEGATED', 'MIXED', 'UNKNOWN'] as const;
 export type Polarity = (typeof POLARITIES)[number];
+
+export const EPISTEMIC_STATUSES = [
+  'ASSERTED_EFFECT',
+  'ASSERTED_NULL_EFFECT',
+  'NON_SIGNIFICANT_RESULT',
+  'NOT_ESTABLISHED',
+  'INSUFFICIENT_EVIDENCE',
+  'REPORTED_FINDING',
+  'UNKNOWN',
+] as const;
+export type EpistemicStatus = (typeof EPISTEMIC_STATUSES)[number];
+
+export const NEGATION_SCOPES = ['PREDICATE', 'OBJECT', 'CLAIM', 'QUANTIFIER', 'EPISTEMIC_STATUS'] as const;
+export type NegationScopeTarget = (typeof NEGATION_SCOPES)[number];
+
+export const NUMERIC_KINDS = ['SCALAR', 'RANGE', 'LOWER_BOUND', 'UPPER_BOUND', 'RATE', 'RATIO'] as const;
+export type NumericKind = (typeof NUMERIC_KINDS)[number];
+
+export const PERCENTAGE_KINDS = ['PERCENTAGE', 'PERCENTAGE_POINT', 'RATE', 'RATIO', 'UNSPECIFIED'] as const;
+export type PercentageKind = (typeof PERCENTAGE_KINDS)[number];
+
+export const PARSER_MODES = ['deterministic', 'model-assisted'] as const;
+export type ParserMode = (typeof PARSER_MODES)[number];
 
 export type ExtractionStatus = 'explicit' | 'normalized' | 'unknown' | 'needs_review';
 
@@ -110,6 +133,21 @@ export interface ClaimEntity extends ProvenancedValue<string> {
   role?: string | null;
 }
 
+export interface NumericValue {
+  kind: NumericKind;
+  value: number | null;
+  lower: number | null;
+  upper: number | null;
+  inclusive: boolean | null;
+  operator: '>' | '>=' | '<' | '<=' | '=' | 'approx' | null;
+  unit: string | null;
+  unit_source_text: string | null;
+  percentage_kind: PercentageKind;
+  denominator: string | null;
+  source_text: string;
+  source_span: SourceSpan | null;
+}
+
 export interface Measurement {
   metric: string;
   value: number | null;
@@ -117,6 +155,54 @@ export interface Measurement {
   operator: '>' | '>=' | '<' | '<=' | '=' | 'approx' | null;
   approximate: boolean;
   relative_or_absolute: 'RELATIVE' | 'ABSOLUTE' | 'UNSPECIFIED';
+  source_text: string;
+  source_span: SourceSpan | null;
+  semantic_type?: string;
+  numeric?: NumericValue;
+  percentage_kind?: PercentageKind;
+  denominator?: string | null;
+  binds_to?: string | null;
+}
+
+export interface NegationScope {
+  target: NegationScopeTarget;
+  operator: 'NOT' | 'NONE' | 'NOT_ALL' | 'NOT_SOME';
+  source_text: string;
+  source_span: SourceSpan | null;
+  negated_atomic_claim_id?: string | null;
+}
+
+export interface QuantifierSpec {
+  kind: Quantifier;
+  target: 'POPULATION' | 'CLAIM' | 'OUTCOME' | 'UNKNOWN';
+  negated: boolean;
+  source_text: string | null;
+  source_span: SourceSpan | null;
+}
+
+export interface EpistemicAssertion {
+  status: EpistemicStatus;
+  source_text: string | null;
+  source_span: SourceSpan | null;
+  scope: 'CLAIM' | 'RELATION' | 'OUTCOME' | 'COMPARATOR' | 'UNKNOWN';
+}
+
+export interface InheritedField {
+  field: string;
+  from_atomic_claim_id: string;
+  rationale: string;
+  source_span: SourceSpan | null;
+}
+
+export interface ConditionConstraint {
+  parameter: string;
+  normalized_parameter: string | null;
+  operator: '>' | '>=' | '<' | '<=' | '=' | 'approx' | null;
+  value: number | null;
+  lower: number | null;
+  upper: number | null;
+  unit: string | null;
+  applies_to: string | null;
   source_text: string;
   source_span: SourceSpan | null;
 }
@@ -191,6 +277,7 @@ export interface ContextConstraints {
 }
 
 export interface ClaimConstraints {
+  scope: 'global' | 'group' | 'atomic';
   population: PopulationConstraints;
   intervention: InterventionConstraints;
   comparator: ComparatorConstraints | null;
@@ -198,6 +285,7 @@ export interface ClaimConstraints {
   temporal: TemporalConstraints;
   statistical: StatisticalConstraints;
   context: ContextConstraints;
+  conditions: ConditionConstraint[];
   type_specific: Record<string, unknown>;
 }
 
@@ -217,7 +305,11 @@ export interface AtomicClaim {
   operators: ClaimOperator[];
   polarity: Polarity;
   quantifier: Quantifier;
+  quantifier_spec: QuantifierSpec;
   modality: Modality;
+  negation_scope: NegationScope | null;
+  epistemic_status: EpistemicAssertion;
+  inherited_fields: InheritedField[];
   constraints: ClaimConstraints;
   measurements: Measurement[];
   unresolved_fields: string[];
@@ -232,10 +324,38 @@ export interface CompositionNode {
   scope?: string | null;
 }
 
+export interface LogicalTreeNode {
+  id: string;
+  kind: 'ATOMIC_REF' | 'OPERATOR';
+  operator: CompositionOperator | null;
+  atomic_claim_id: string | null;
+  child_ids: string[];
+  epistemic_scope: EpistemicStatus | null;
+  source_text: string | null;
+  source_span: SourceSpan | null;
+}
+
+export interface LogicalExpressionTree {
+  root_id: string | null;
+  nodes: LogicalTreeNode[];
+}
+
+export interface ConstraintGroup {
+  id: string;
+  atomic_claim_ids: string[];
+  constraints: ClaimConstraints;
+  inheritance_basis: string;
+  source_span: SourceSpan | null;
+}
+
 export interface ParserMetadata {
   parser_version: string;
   schema_version: string;
   method: 'deterministic' | 'model' | 'model_with_deterministic_fallback';
+  requested_mode: ParserMode;
+  actual_method: 'deterministic' | 'model' | 'deterministic-fallback';
+  fallback_used: boolean;
+  fallback_reason: string | null;
   model_name: string | null;
   attempts: number;
   model_error: string | null;
@@ -250,13 +370,16 @@ export interface StructuredClaim {
   parse_status: 'success' | 'needs_review' | 'failed';
   atomic_claims: AtomicClaim[];
   composition: CompositionNode[];
+  logical_tree: LogicalExpressionTree;
   global_constraints: ClaimConstraints;
+  group_constraints: ConstraintGroup[];
   unresolved_fields: string[];
   warnings: string[];
   parser_metadata: ParserMetadata;
 }
 
 export interface ClaimParserOptions {
+  mode?: ParserMode;
   modelProvider?: import('../client/ModelProvider.js').ModelProvider;
   model?: string;
   maxModelAttempts?: number;
@@ -310,7 +433,7 @@ const ENTITY_SCHEMA = {
 const MEASUREMENT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['metric', 'value', 'unit', 'operator', 'approximate', 'relative_or_absolute', 'source_text', 'source_span'],
+  required: ['metric', 'value', 'unit', 'operator', 'approximate', 'relative_or_absolute', 'source_text', 'source_span', 'semantic_type', 'numeric', 'percentage_kind', 'denominator', 'binds_to'],
   properties: {
     metric: { type: 'string' },
     value: { type: ['number', 'null'] },
@@ -320,14 +443,20 @@ const MEASUREMENT_SCHEMA = {
     relative_or_absolute: { enum: ['RELATIVE', 'ABSOLUTE', 'UNSPECIFIED'] },
     source_text: { type: 'string' },
     source_span: { anyOf: [SOURCE_SPAN_SCHEMA, { type: 'null' }] },
+    semantic_type: { type: ['string', 'null'] },
+    numeric: { type: ['object', 'null'] },
+    percentage_kind: { enum: [...PERCENTAGE_KINDS, null] },
+    denominator: { type: ['string', 'null'] },
+    binds_to: { type: ['string', 'null'] },
   },
 } as const;
 
 const CONSTRAINTS_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['population', 'intervention', 'comparator', 'outcome', 'temporal', 'statistical', 'context', 'type_specific'],
+  required: ['scope', 'population', 'intervention', 'comparator', 'outcome', 'temporal', 'statistical', 'context', 'conditions', 'type_specific'],
   properties: {
+    scope: { enum: ['global', 'group', 'atomic'] },
     population: { type: 'object' },
     intervention: { type: 'object' },
     comparator: { type: ['object', 'null'] },
@@ -335,6 +464,7 @@ const CONSTRAINTS_SCHEMA = {
     temporal: { type: 'object' },
     statistical: { type: 'object' },
     context: { type: 'object' },
+    conditions: { type: 'array', items: { type: 'object' } },
     type_specific: { type: 'object' },
   },
 } as const;
@@ -358,7 +488,11 @@ const ATOMIC_CLAIM_SCHEMA = {
     'operators',
     'polarity',
     'quantifier',
+    'quantifier_spec',
     'modality',
+    'negation_scope',
+    'epistemic_status',
+    'inherited_fields',
     'constraints',
     'measurements',
     'unresolved_fields',
@@ -380,7 +514,11 @@ const ATOMIC_CLAIM_SCHEMA = {
     operators: { type: 'array', items: { enum: OPERATOR_TYPES } },
     polarity: { enum: POLARITIES },
     quantifier: { enum: QUANTIFIERS },
+    quantifier_spec: { type: 'object' },
     modality: { enum: MODALITIES },
+    negation_scope: { type: ['object', 'null'] },
+    epistemic_status: { type: 'object' },
+    inherited_fields: { type: 'array', items: { type: 'object' } },
     constraints: CONSTRAINTS_SCHEMA,
     measurements: { type: 'array', items: MEASUREMENT_SCHEMA },
     unresolved_fields: { type: 'array', items: { type: 'string' } },
@@ -404,16 +542,56 @@ const COMPOSITION_SCHEMA = {
 const PARSER_METADATA_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['parser_version', 'schema_version', 'method', 'model_name', 'attempts', 'model_error', 'validation_errors', 'created_at'],
+  required: ['parser_version', 'schema_version', 'method', 'requested_mode', 'actual_method', 'fallback_used', 'fallback_reason', 'model_name', 'attempts', 'model_error', 'validation_errors', 'created_at'],
   properties: {
     parser_version: { type: 'string' },
     schema_version: { type: 'string' },
     method: { enum: ['deterministic', 'model', 'model_with_deterministic_fallback'] },
+    requested_mode: { enum: PARSER_MODES },
+    actual_method: { enum: ['deterministic', 'model', 'deterministic-fallback'] },
+    fallback_used: { type: 'boolean' },
+    fallback_reason: { type: ['string', 'null'] },
     model_name: { type: ['string', 'null'] },
     attempts: { type: 'integer', minimum: 0 },
     model_error: { type: ['string', 'null'] },
     validation_errors: { type: 'array', items: { type: 'string' } },
     created_at: { type: 'string' },
+  },
+} as const;
+
+const LOGICAL_TREE_NODE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['id', 'kind', 'operator', 'atomic_claim_id', 'child_ids', 'epistemic_scope', 'source_text', 'source_span'],
+  properties: {
+    id: { type: 'string' },
+    kind: { enum: ['ATOMIC_REF', 'OPERATOR'] },
+    operator: { enum: [...COMPOSITION_OPERATORS, null] },
+    atomic_claim_id: { type: ['string', 'null'] },
+    child_ids: { type: 'array', items: { type: 'string' } },
+    epistemic_scope: { enum: [...EPISTEMIC_STATUSES, null] },
+    source_text: { type: ['string', 'null'] },
+    source_span: { anyOf: [SOURCE_SPAN_SCHEMA, { type: 'null' }] },
+  },
+} as const;
+
+const LOGICAL_TREE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['root_id', 'nodes'],
+  properties: { root_id: { type: ['string', 'null'] }, nodes: { type: 'array', items: LOGICAL_TREE_NODE_SCHEMA } },
+} as const;
+
+const GROUP_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['id', 'atomic_claim_ids', 'constraints', 'inheritance_basis', 'source_span'],
+  properties: {
+    id: { type: 'string' },
+    atomic_claim_ids: { type: 'array', items: { type: 'string' } },
+    constraints: CONSTRAINTS_SCHEMA,
+    inheritance_basis: { type: 'string' },
+    source_span: { anyOf: [SOURCE_SPAN_SCHEMA, { type: 'null' }] },
   },
 } as const;
 
@@ -428,7 +606,9 @@ export const CLAIM_STRUCTURED_OUTPUT_SCHEMA = {
     'parse_status',
     'atomic_claims',
     'composition',
+    'logical_tree',
     'global_constraints',
+    'group_constraints',
     'unresolved_fields',
     'warnings',
     'parser_metadata',
@@ -440,7 +620,9 @@ export const CLAIM_STRUCTURED_OUTPUT_SCHEMA = {
     parse_status: { enum: ['success', 'needs_review', 'failed'] },
     atomic_claims: { type: 'array', items: ATOMIC_CLAIM_SCHEMA },
     composition: { type: 'array', items: COMPOSITION_SCHEMA },
+    logical_tree: LOGICAL_TREE_SCHEMA,
     global_constraints: CONSTRAINTS_SCHEMA,
+    group_constraints: { type: 'array', items: GROUP_SCHEMA },
     unresolved_fields: { type: 'array', items: { type: 'string' } },
     warnings: { type: 'array', items: { type: 'string' } },
     parser_metadata: PARSER_METADATA_SCHEMA,

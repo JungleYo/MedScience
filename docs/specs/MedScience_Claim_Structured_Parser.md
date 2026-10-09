@@ -79,11 +79,21 @@ NEGATION, CONDITIONAL, TEMPORAL, DOSE_RESPONSE,
 INTERACTION, MEDIATION, SUBGROUP_DIFFERENCE
 ```
 
-Atomic claims can be connected by `AND`, `OR`, `NOT`, or `IF_THEN` composition
-nodes. Each node references atomic IDs, and validation rejects dangling IDs.
+Atomic claims can be connected by `AND`, `OR`, `NOT`, or `IF_THEN` nodes in the
+authoritative recursive `logical_tree`. The legacy `composition` array remains
+for v1 consumers, but new consumers should follow `logical_tree.root_id` and
+validate every child reference. This preserves nested structures such as
+`(A OR B) AND NOT(confirmed(A AND B))`; it does not flatten alternatives into
+one conjunction.
 `NON_SIGNIFICANT_RESULT` is intentionally distinct from `NULL_EFFECT` and
 `EQUIVALENCE`. A possible or reported statement remains a modality, not a
 calibrated probability.
+
+Each atomic claim also carries `epistemic_status`, `negation_scope`, and a
+structured `quantifier_spec`. Examples include `NOT_ALL` for “not all”,
+`NOT_ESTABLISHED` for “not shown”, and `NON_SIGNIFICANT_RESULT` for a
+non-significant result. These fields describe what the source establishes;
+they never turn a lack of evidence into an asserted null effect.
 
 ### Layer 3: scope and constraints
 
@@ -99,6 +109,19 @@ Every non-null extracted value should include `source_text`, an exact
 `unknown`, or `needs_review`). A normalized value such as `mortality` can keep
 the original Chinese phrase `死亡率` as its source text.
 
+`ClaimConstraints.scope` is one of `global`, `group`, or `atomic`. The
+deterministic parser does not copy a local population, time point, or outcome
+into `global_constraints`. Explicitly shared constraints are represented in
+`group_constraints`; omitted subjects or interventions in a compound claim
+are marked in `inherited_fields` rather than silently duplicated.
+
+Measurements have both the legacy fields and a `numeric` representation. The
+latter distinguishes scalars, ranges, bounds, ratios, and rates, including
+confidence intervals, p-values, denominators such as `100000 persons`, and
+percentage points. Relative and absolute effects remain separate, while an
+unspecified percentage remains `UNSPECIFIED`. Thresholds and dose increments
+are stored in `constraints.conditions` with their unit and scope.
+
 ## Output schema
 
 The top-level object contains:
@@ -111,7 +134,9 @@ The top-level object contains:
   parse_status: 'success' | 'needs_review' | 'failed';
   atomic_claims: AtomicClaim[];
   composition: CompositionNode[];
+  logical_tree: LogicalExpressionTree;
   global_constraints: ClaimConstraints;
+  group_constraints: ConstraintGroup[];
   unresolved_fields: string[];
   warnings: string[];
   parser_metadata: ParserMetadata;
@@ -119,8 +144,10 @@ The top-level object contains:
 ```
 
 An atomic claim contains the original text and span, normalized statement,
-three-layer semantic fields, constraints, measurements, unresolved fields, and
-warnings. The schema is currently `1.0.0` and the parser is `1.0.0`.
+three-layer semantic fields, scope metadata, constraints, measurements,
+unresolved fields, and warnings. The schema and parser are currently `2.0.0`.
+The v1 fields `composition`, `method`, and the common constraint sections
+remain present for compatibility.
 
 ## Calling the parser
 
@@ -145,6 +172,13 @@ const provider = new GenericModelClient(activeModelProfile);
 const parser = new ClaimParser({ modelProvider: provider });
 const result = await parser.parseClaimAsync(claim);
 ```
+
+Use `mode: 'deterministic'` to force the local parser even when a provider is
+available. Use `mode: 'model-assisted'` with `parseClaimAsync` when a provider
+is intended. `parser_metadata.requested_mode`, `actual_method`,
+`fallback_used`, and `fallback_reason` make the distinction machine-readable.
+The synchronous API cannot call a provider and therefore marks an explicit
+model-assisted request as `deterministic-fallback`.
 
 If the provider is unavailable or returns invalid JSON/enums/references, the
 default behavior is `needs_review` plus a deterministic result and structured
@@ -193,6 +227,25 @@ The result contains two atomics connected by `AND`; their outcomes are
 `mortality` and `major bleeding risk`. The intervention from the first clause
 is retained as shared context for the second clause. The safety statement is
 not converted into a negation of the mortality statement.
+
+## Challenge benchmark
+
+The challenge fixture is
+`packages/core/tests/fixtures/medscience_claim_parser_challenge_set.json`.
+It contains exactly 35 cases across basic, logic, scope, and robustness tiers;
+the parser never hardcodes their expected outputs. The supplemental fixture
+contains 10 independent claims. Run:
+
+```bash
+npx tsx packages/core/tests/test-claim-parser-benchmark.ts
+```
+
+The benchmark evaluates both `parseClaim` and `parseClaimAsync`, validates
+source spans and logical references, and emits per-case `PASS`, `PARTIAL`, or
+`FAIL` results, including basic/logic/scope/robustness group counts and failure
+reasons. Without a configured provider the deterministic result is reported
+separately and model-assisted status is `NOT_RUN`; no API key is required for
+the local benchmark.
 
 ## Extending the parser
 
