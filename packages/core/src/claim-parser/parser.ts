@@ -69,10 +69,6 @@ function failedResult(claim: string, errors: string[], now: Date, modelName: str
     parser_metadata: {
       ...result.parser_metadata,
       method: 'model',
-      requested_mode: 'model-assisted',
-      actual_method: 'model',
-      fallback_used: false,
-      fallback_reason: null,
       model_name: modelName,
       attempts,
       model_error: errors.join('; '),
@@ -91,22 +87,7 @@ export class ClaimParser {
   /** Synchronous, API-free parse used for local workflows and unit tests. */
   public parseClaim(claim: string): StructuredClaim {
     assertClaimInput(claim);
-    const now = this.options.now?.() || new Date();
-    const result = deterministicParseClaim(claim, now);
-    if (this.options.mode !== 'model-assisted') return result;
-    return setMetadata({
-      ...result,
-      parse_status: result.parse_status === 'failed' ? 'failed' : 'needs_review',
-      warnings: Array.from(new Set([...result.warnings, 'Model-assisted mode was requested through the synchronous API; deterministic parsing was used as a reviewable fallback.'])),
-    }, {
-      method: 'model_with_deterministic_fallback',
-      requested_mode: 'model-assisted',
-      actual_method: 'deterministic-fallback',
-      fallback_used: true,
-      fallback_reason: this.options.modelProvider ? 'SYNC_API_REQUIRES_PARSE_CLAIM_ASYNC' : 'MODEL_PROVIDER_MISSING',
-      model_name: this.options.modelProvider?.name || null,
-      model_error: null,
-    });
+    return deterministicParseClaim(claim, this.options.now?.() || new Date());
   }
 
   /** Alias for callers that prefer a short method name. */
@@ -124,13 +105,10 @@ export class ClaimParser {
     if (!claim.trim()) {
       return this.options.fallbackToDeterministic === false
         ? failedResult(claim, ['Claim text is empty.'], now, null, 0)
-        : this.markDeterministicFallback(deterministicParseClaim(claim, now), 'EMPTY_CLAIM');
+        : deterministicParseClaim(claim, now);
     }
     const provider = this.options.modelProvider;
-    if (!provider) {
-      const deterministic = deterministicParseClaim(claim, now);
-      return this.options.mode === 'model-assisted' ? this.markDeterministicFallback(deterministic, 'MODEL_PROVIDER_MISSING') : deterministic;
-    }
+    if (!provider) return deterministicParseClaim(claim, now);
 
     let modelName = this.options.model || provider.name || 'claim-parser';
     try {
@@ -194,10 +172,6 @@ export class ClaimParser {
           schema_version: CLAIM_SCHEMA_VERSION,
           parser_version: CLAIM_PARSER_VERSION,
           method: 'model',
-          requested_mode: 'model-assisted',
-          actual_method: 'model',
-          fallback_used: false,
-          fallback_reason: null,
           model_name: modelName,
           attempts: attempt,
           model_error: null,
@@ -220,10 +194,6 @@ export class ClaimParser {
         parser_metadata: {
           ...fallback.parser_metadata,
           method: 'model_with_deterministic_fallback',
-          requested_mode: 'model-assisted',
-          actual_method: 'deterministic-fallback',
-          fallback_used: true,
-          fallback_reason: 'MODEL_OUTPUT_REJECTED',
           model_name: modelName,
           attempts: maxAttempts,
           model_error: errors.join('; '),
@@ -236,22 +206,6 @@ export class ClaimParser {
 
   public async parseAsync(claim: string): Promise<StructuredClaim> {
     return this.parseClaimAsync(claim);
-  }
-
-  private markDeterministicFallback(result: StructuredClaim, reason: string): StructuredClaim {
-    if (this.options.mode !== 'model-assisted') return result;
-    return setMetadata({
-      ...result,
-      parse_status: result.parse_status === 'failed' ? 'failed' : 'needs_review',
-      warnings: Array.from(new Set([...result.warnings, 'Model-assisted mode was requested but no model output was accepted; deterministic parsing is explicitly marked as a fallback.'])),
-    }, {
-      method: 'model_with_deterministic_fallback',
-      requested_mode: 'model-assisted',
-      actual_method: 'deterministic-fallback',
-      fallback_used: true,
-      fallback_reason: reason,
-      model_name: this.options.modelProvider?.name || null,
-    });
   }
 }
 
